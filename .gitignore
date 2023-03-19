@@ -1,0 +1,10 @@
+## Git忽略文件（YangLinwei 2021.08.06）
+.DS_Store
+.idea
+*.iml
+.idea
+logs
+out
+gen
+target
+*/target/

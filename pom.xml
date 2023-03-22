@@ -40,7 +40,7 @@ under the License.
     <modules>
         <module>flink-common</module>
         <module>flink-mysql-kafka</module>
-        <module>flink-kafka-es</module>
+        <module>flink-kafka-mysqles</module>
     </modules>
 
     <repositories>

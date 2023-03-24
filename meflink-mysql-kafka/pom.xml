@@ -21,18 +21,18 @@ under the License.
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <artifactId>flink-parent</artifactId>
-        <groupId>com.medata.flink</groupId>
+        <artifactId>meflink-parent</artifactId>
+        <groupId>com.meflink</groupId>
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>flink-mysql-kafka</artifactId>
+    <artifactId>meflink-mysql-kafka</artifactId>
     <packaging>jar</packaging>
 
     <dependencies>
         <dependency>
-            <groupId>com.medata.flink</groupId>
-            <artifactId>flink-common</artifactId>
+            <groupId>com.meflink</groupId>
+            <artifactId>meflink-common</artifactId>
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>

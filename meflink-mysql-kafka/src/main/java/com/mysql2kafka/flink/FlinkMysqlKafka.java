@@ -7,6 +7,7 @@ import com.mysql2kafka.flink.config.Mysql2Kafka;
 import com.mysql2kafka.flink.config.YamlConfig;
 import com.mysql2kafka.flink.kafka.FlinkRebalancePartitioner;
 import com.ververica.cdc.connectors.mysql.source.MySqlSource;
+import com.ververica.cdc.connectors.mysql.table.StartupMode;
 import com.ververica.cdc.connectors.mysql.table.StartupOptions;
 import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.commons.lang3.StringUtils;
@@ -42,15 +43,18 @@ public class FlinkMysqlKafka {
         properties.setProperty("converters", "dateConverters");
         properties.setProperty("dateConverters.type", "com.common.meflink.utils.MySqlDateTimeConverter");
 
-
         Mysql2Kafka conf = config.getMysql2Kafka();
-
         //默认增量订阅
         StartupOptions startupOptions = StartupOptions.latest();
         String serverId = "2000";
-        if (conf.getDatasourceMysqlSyncRunMode() == Config.SOURCE_MODE_FULL_DATA) {
+        if (conf.getStartupMode() == StartupMode.INITIAL.ordinal()) {
             startupOptions = StartupOptions.initial();
             serverId = "3000";
+        } else if(conf.getStartupMode() == StartupMode.TIMESTAMP.ordinal()){
+            if(conf.getStartupTimestamp()==0){
+                throw new Exception("StartupMode is TIMESTAMP,But not setting startup_timestamp");
+            }
+            startupOptions = StartupOptions.timestamp(conf.getStartupTimestamp());
         }
 
         if (conf.getDatasourceMysqlSlaveId() > 0) {
@@ -61,8 +65,8 @@ public class FlinkMysqlKafka {
                 .hostname(conf.getDatasourceMysqlHost())
                 .serverTimeZone(conf.getDatasourceMysqlTimezone())
                 .port(conf.getDatasourceMysqlPort())
-                .databaseList(conf.getDatasourceMysqlSyncDatabases()) // set captured database
-                .tableList(conf.getDatasourceMysqlSyncTables()) // set captured table
+                .databaseList(conf.getDatasourceDatabases()) // set captured database
+                .tableList(conf.getDatasourceTables()) // set captured table
                 .username(conf.getDatasourceMysqlUsername()).password(conf.getDatasourceMysqlPassword()).serverId(serverId)
                 .debeziumProperties(properties).startupOptions(startupOptions).deserializer(new JsonDebeziumDeserializationSchema()).includeSchemaChanges(true) // converts SourceRecord to JSON String
                 .build();
@@ -70,6 +74,7 @@ public class FlinkMysqlKafka {
 
         KafkaSink<String> kafkaSink = KafkaSink.<String>builder().setBootstrapServers(conf.getSinkKafkaBrokers()).
                 setProperty("transaction.timeout.ms", "600000").setRecordSerializer(getKafkaRecordSerializer()).setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE).build();
+
         env.getCheckpointConfig().enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
         env.enableCheckpointing(3000);
         EmbeddedRocksDBStateBackend backend = new EmbeddedRocksDBStateBackend(true);

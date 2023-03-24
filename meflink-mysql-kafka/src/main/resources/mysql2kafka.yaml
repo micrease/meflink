@@ -1,0 +1,26 @@
+job:
+  id: mk01
+  checkpoint-directory: file:///tmp/checkpoint
+datasource:
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    username: root
+    password: 123456
+    slave_id: 1000
+    timezone: Asia/Shanghai
+    databases: test
+    tables: test.tb_order
+    # 0   INITIAL,
+    # 1   EARLIEST_OFFSET,
+    # 2   LATEST_OFFSET,
+    # 3   SPECIFIC_OFFSETS,
+    # 4   TIMESTAMP
+    startup_mode : 2
+    # startup_mode = 4时，指定时间戳
+    startup_timestamp : 0
+sink:
+  kafka:
+    brokers: 127.0.0.1:9092
+    parallelism: 1
+    partition: 1

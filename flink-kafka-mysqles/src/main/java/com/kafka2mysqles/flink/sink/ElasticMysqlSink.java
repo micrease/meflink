@@ -1,19 +1,19 @@
 package com.kafka2mysqles.flink.sink;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch.core.BulkRequest;
-import co.elastic.clients.elasticsearch.core.BulkResponse;
-import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 import co.elastic.clients.util.DateTime;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.kafka2mysqles.flink.mysql.ColumnInfo;
+import com.ibm.icu.impl.UResource;
+import com.kafka2mysqles.flink.config.Config;
+import com.kafka2mysqles.flink.config.Kafka2MyES;
+import com.kafka2mysqles.flink.mysql.TableSchema;
+import com.kafka2mysqles.flink.mysql.TableSchemaColumn;
 import com.kafka2mysqles.flink.mysql.MysqlTableSchema;
 import com.kafka2mysqles.flink.mysql.MysqlType;
-import com.kafka2mysqles.flink.vo.ConfigVo;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.configuration.Configuration;
@@ -52,8 +52,8 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
     private static final String SubTableSeperator = "####";
     //tb_order##insert-->JSONObject
     private Map<String, List<JSONObject>> subTableOperateMap;
-    ConfigVo configVo;
-    private Map<String, Map<String, ColumnInfo>> tableColumnTypes;
+    Config config;
+    private Map<String, TableSchema> tableSchemas;
 
     DateTimeFormatter rfc3339formatter;
 
@@ -65,32 +65,38 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
         //解析配置
         ExecutionConfig.GlobalJobParameters globalParams = getRuntimeContext().getExecutionConfig().getGlobalJobParameters();
         Configuration globalConfig = (Configuration) globalParams;
-        String configVoJson = globalConfig.getString("configVo", "");
-        if (!StringUtils.isEmpty(configVoJson)) {
-            configVo = JSON.parseObject(configVoJson, ConfigVo.class);
+        String configJson = globalConfig.getString("config", "");
+        if (!StringUtils.isEmpty(configJson)) {
+            config = JSON.parseObject(configJson, Config.class);
         }
-        logger.info("ElasticMysqlSink Config={}", configVoJson);
-        loadTableSchema();
+        logger.info("ElasticMysqlSink Config={}", configJson);
+        //加载源始表
+        loadSourceTableSchema();
+        //创建分表结构
+        checkAndCreateSplitTableSchema();
 
         //连接es
-        RestClientBuilder builder = RestClient.builder(new HttpHost(configVo.getSinkEsHost(), configVo.getSinkEsPort()));
+        RestClientBuilder builder = RestClient.builder(new HttpHost(config.getKafka2MyES().getSinkElasticsearchHost(), config.getKafka2MyES().getSinkElasticsearchPort()));
         // Create the transport with a Jackson mapper
-        if (!StringUtils.isEmpty(configVo.getSinkEsUsername())) {
+        if (!StringUtils.isEmpty(config.getKafka2MyES().getSinkElasticsearchUsername())) {
             //https://www.elastic.co/guide/en/elasticsearch/client/java-api-client/current/connecting.html
             final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-            credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(configVo.getSinkEsUsername(), configVo.getSinkEsPassword()));
+            credentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(
+                    config.getKafka2MyES().getSinkElasticsearchUsername(),
+                    config.getKafka2MyES().getSinkElasticsearchPassword()));
             builder.setHttpClientConfigCallback(hc -> hc.setDefaultCredentialsProvider(credentialsProvider));
         }
         RestClient restClient = builder.build();
         ElasticsearchTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
         // And create the API client
         elasticsearchClient = new ElasticsearchClient(transport);
+        //创建es mapping
+        createElasticsearchMapping();
 
         //连接目标库
         destMysqlConnection = getConnection();
         destMysqlConnection.setAutoCommit(false);
         subTableOperateMap = new HashMap<>();
-
 
         rfc3339formatter = DateTimeFormatter
                 .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
@@ -119,17 +125,16 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
 
     @Override
     public void invoke(List<JSONObject> values, Context context) throws Exception {
-        logger.info("ElasticMysqlSink invoke  Count={}",values.size());
+        logger.info("ElasticMysqlSink invoke  Count={}", values.size());
         subTableOperateMap.clear();
 
         writeToMysql(values);
         List<JSONObject> esValues = formatESValue(values);
-        SinkToES.writeToEs(elasticsearchClient, esValues);
+        SinkToES.writeToEs(config, elasticsearchClient, esValues);
     }
 
     public void writeToMysql(List<JSONObject> values) throws SQLException {
         //数据分组
-        int subTables = configVo.getSinkMysqlSubtableNum();
         for (JSONObject jsonObject : values) {
             JSONObject after = jsonObject.getJSONObject("after");
             int userId = 0;
@@ -139,10 +144,13 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
                 userId = after.getIntValue("user_id");
             }
 
-            int subTableId = userId % subTables;
             JSONObject source = jsonObject.getJSONObject("source");
+            String db = source.getString("db");
             String table = source.getString("table");
-            String subTableName = String.format("%s_%d", table, subTableId);
+            String fullname = String.format("%s.%s", db, table);
+            int shardingNumber = config.getKafka2MyES().getSinkMysqlTableShardingRule().get(fullname).getNumber();
+            int shardingId = userId % shardingNumber;
+            String subTableName = String.format("%s_%d", table, shardingId);
             String op = jsonObject.getString("op");
             String key = String.format("%s%s%s", subTableName, SubTableSeperator, op);
             if (!subTableOperateMap.containsKey(key)) {
@@ -169,17 +177,18 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
     }
 
     public List<JSONObject> formatESValue(List<JSONObject> rows) {
-        List<JSONObject> afterList = new ArrayList<>(rows.size());
+        List<JSONObject> esList = new ArrayList<>(rows.size());
         for (int idx = 0; idx < rows.size(); idx++) {
-            JSONObject row = rows.get(idx);
-            JSONObject originAfter = row.getJSONObject("after");
-            JSONObject after = originAfter.clone();
+            JSONObject originRow = rows.get(idx);
+
+            JSONObject row = originRow.clone();
+            JSONObject after = row.getJSONObject("after");
             JSONObject source = row.getJSONObject("source");
             String db = source.getString("db");
             String table = source.getString("table");
             String dbTable = String.format("%s.%s", db, table);
 
-            Map<String, ColumnInfo> columnTypes = tableColumnTypes.get(dbTable);
+            Map<String, TableSchemaColumn> columnTypes = tableSchemas.get(dbTable).getColumns();
             for (String key : after.keySet()) {
                 if (after.get(key) == null) {
                     logger.info("formatESValue {},{},{}", dbTable, key);
@@ -194,9 +203,9 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
                     }
                 }
             }
-            afterList.add(after);
+            esList.add(row);
         }
-        return afterList;
+        return esList;
     }
 
     private void upsert(String op, String tableName, List<JSONObject> rows) throws SQLException {
@@ -245,25 +254,81 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
         }
     }
 
-    private void loadTableSchema() throws SQLException {
-        String[] tableList = configVo.getSourceMysqlTableList();
-        tableColumnTypes = new HashMap<>();
+    private void loadSourceTableSchema() throws SQLException, ClassNotFoundException {
+        String[] tableList = config.getMysql2Kafka().getDatasourceMysqlSyncTables().split(",");
+        tableSchemas = new HashMap<>();
         String jdbcUrl = "jdbc:mysql://%s:%d/%s";
         for (int i = 0; i < tableList.length; i++) {
             String dbTableName = tableList[i];
             String[] arr = StringUtils.split(dbTableName, ".");
             String dbName = arr[0];
             String tableName = arr[1];
-            jdbcUrl = String.format(jdbcUrl, configVo.getSourceMysqlHost(), configVo.getSourceMysqlPort(), dbName);
+            jdbcUrl = String.format(jdbcUrl, config.getMysql2Kafka().getDatasourceMysqlHost(), config.getMysql2Kafka().getDatasourceMysqlPort(), dbName);
+
             MysqlTableSchema table = new MysqlTableSchema();
-            table.connection(jdbcUrl, configVo.getSourceMysqlUsername(), configVo.getSourceMysqlPassword());
-            Map<String, ColumnInfo> columnTypes = table.getTableColumnDataType(dbName, tableName);
-
-
-            tableColumnTypes.put(dbTableName, columnTypes);
+            table.connection(jdbcUrl, config.getMysql2Kafka().getDatasourceMysqlUsername(), config.getMysql2Kafka().getDatasourceMysqlPassword());
+            TableSchema tableSchema = table.getTableSchema(dbName, tableName);
+            tableSchemas.put(dbTableName, tableSchema);
+            table.close();
         }
+        logger.info("loadTableSchema tableSchemas={}", tableSchemas);
+    }
 
-        logger.info("loadTableSchema tableColumnTypes={}", tableColumnTypes);
+    private void checkAndCreateSplitTableSchema() throws SQLException, ClassNotFoundException {
+        String[] tableList = config.getMysql2Kafka().getDatasourceMysqlSyncTables().split(",");
+        String sinkMysqlJdbcUrl = config.getKafka2MyES().getSinkMysqlJdbcUrl();
+
+        for (int i = 0; i < tableList.length; i++) {
+            String dbTableName = tableList[i];
+            String[] arr = StringUtils.split(dbTableName, ".");
+            String dbName = arr[0];
+            String tableName = arr[1];
+            int splitNum = config.getKafka2MyES().getSinkMysqlTableShardingRule().get(dbTableName).getNumber();
+
+            for (int tableIdx = 0; tableIdx < splitNum; tableIdx++) {
+                String splitTableName = String.format("%s_%d", tableName, tableIdx);
+                MysqlTableSchema sinkTable = new MysqlTableSchema();
+                sinkTable.connection(sinkMysqlJdbcUrl, config.getKafka2MyES().getSinkMysqlUsername(), config.getKafka2MyES().getSinkMysqlPassword());
+                String splitTableDDL = null;
+                try {
+                    splitTableDDL = sinkTable.getCreateTable("", splitTableName);
+                    if (StringUtils.isEmpty(splitTableDDL)) {
+                        splitTableDDL = tableSchemas.get(dbTableName).getCreateDDL();
+                        splitTableDDL = StringUtils.replaceOnce(splitTableDDL, tableName, splitTableName);
+                        logger.info("checkAndCreateSplitTableSchema {} is Not Exist,Start Create,DDL={}", splitTableName, splitTableDDL);
+                        sinkTable.createTable(splitTableDDL);
+                    }
+                } catch (SQLException e) {
+                    splitTableDDL = tableSchemas.get(dbTableName).getCreateDDL();
+                    splitTableDDL = StringUtils.replaceOnce(splitTableDDL, tableName, splitTableName);
+                    logger.info("checkAndCreateSplitTableSchema SQLException={}, {} is Not Exist,Start Create,DDL={}", e.getMessage(), splitTableName, splitTableDDL);
+                    boolean result = sinkTable.createTable(splitTableDDL);
+                    logger.info("checkAndCreateSplitTableSchema create {} result {}!!", splitTableName, result);
+                } finally {
+                    sinkTable.close();
+                }
+            }
+        }
+        //logger.info("loadTableSchema tableSchemas={}", tableSchemas);
+    }
+
+    void createElasticsearchMapping() {
+        Map<String, Kafka2MyES.ElasticsearchSharding> shardingMap = config.getKafka2MyES().getSinkElasticsearchShardingRule();
+        for (Map.Entry<String, Kafka2MyES.ElasticsearchSharding> listEntry : shardingMap.entrySet()) {
+            String templateFile = listEntry.getValue().getTemplateFile();
+            if (StringUtils.isEmpty(templateFile)) {
+                logger.error("createElasticsearchMapping templateFile empty");
+            } else {
+                String templateName = listEntry.getValue().getIndexBaseName() + "_template";
+                try {
+                    logger.info("createElasticsearchMapping Start,{},{}", templateName, templateFile);
+                    SinkToES.createTemplate(elasticsearchClient, templateName, templateFile);
+                } catch (IOException e) {
+                    logger.error("createElasticsearchMapping error,{},{}", templateName, templateFile);
+                    throw new RuntimeException(e);
+                }
+            }
+        }
     }
 
     private void flinkJDBCTest() {
@@ -281,7 +346,6 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
             logger.info("CatalogColumnStatistics.getColumnStatisticsData {}", col.getColumnStatisticsData());
             logger.info("CatalogColumnStatistics.getProperties {}", col.getProperties());
 
-
             CatalogBaseTable table = catalog.getTable(new ObjectPath("test", "tb_order"));
             logger.info("CatalogBaseTable:{}", table.toString());
             logger.info("CatalogBaseTable getUnresolvedSchema{}", table.getUnresolvedSchema());
@@ -293,8 +357,8 @@ public class ElasticMysqlSink extends RichSinkFunction<List<JSONObject>> {
     private Connection getConnection() {
         Connection con = null;
         try {
-            Class.forName("com.mysql.jdbc.Driver");
-            con = DriverManager.getConnection(configVo.getSinkMysqlJdbcUrl(), configVo.getSinkMysqlUsername(), configVo.getSinkMysqlPassword());
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            con = DriverManager.getConnection(config.getKafka2MyES().getSinkMysqlJdbcUrl(), config.getKafka2MyES().getSinkMysqlUsername(), config.getKafka2MyES().getSinkMysqlPassword());
         } catch (Exception e) {
             logger.error("mysql connection has exception , msg = " + e.getMessage());
         }

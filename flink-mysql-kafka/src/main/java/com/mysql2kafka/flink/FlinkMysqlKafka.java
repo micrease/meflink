@@ -2,9 +2,10 @@
 package com.mysql2kafka.flink;
 
 import com.alibaba.fastjson.JSONObject;
-import com.mysql2kafka.flink.config.ConfigUtil;
+import com.mysql2kafka.flink.config.Config;
+import com.mysql2kafka.flink.config.Mysql2Kafka;
+import com.mysql2kafka.flink.config.YamlConfig;
 import com.mysql2kafka.flink.kafka.FlinkRebalancePartitioner;
-import com.mysql2kafka.flink.vo.ConfigVo;
 import com.ververica.cdc.connectors.mysql.source.MySqlSource;
 import com.ververica.cdc.connectors.mysql.table.StartupOptions;
 import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
@@ -16,6 +17,7 @@ import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackend;
 import org.apache.flink.contrib.streaming.state.PredefinedOptions;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
@@ -30,7 +32,8 @@ public class FlinkMysqlKafka {
 
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        ConfigVo configVo = ConfigUtil.loadConfig(env, args);
+        env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime);
+        Config config = YamlConfig.loadConfig(env, args);
         //Caused by: org.apache.flink.table.api.ValidationException: The MySQL server has a timezone offset (0 seconds ahead of UTC)
         // which does not match the configured timezone Asia/Shanghai. Specify the right server-time-zone to avoid inconsistencies for time-related fields.
         Properties properties = new Properties();
@@ -39,30 +42,33 @@ public class FlinkMysqlKafka {
         properties.setProperty("converters", "dateConverters");
         properties.setProperty("dateConverters.type", "com.common.meflink.utils.MySqlDateTimeConverter");
 
+
+        Mysql2Kafka conf = config.getMysql2Kafka();
+
         //默认增量订阅
         StartupOptions startupOptions = StartupOptions.latest();
         String serverId = "2000";
-        if (configVo.getSourceMysqlMode() == ConfigUtil.SOURCE_MODE_FULL_DATA) {
+        if (conf.getDatasourceMysqlSyncRunMode() == Config.SOURCE_MODE_FULL_DATA) {
             startupOptions = StartupOptions.initial();
             serverId = "3000";
         }
 
-        if (!StringUtils.isEmpty(configVo.getSourceMysqlSlaveID())) {
-            serverId = configVo.getSourceMysqlSlaveID();
+        if (conf.getDatasourceMysqlSlaveId() > 0) {
+            serverId = String.valueOf(conf.getDatasourceMysqlSlaveId());
         }
 
         MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
-                .hostname(configVo.getSourceMysqlHost())
-                .serverTimeZone(configVo.getSourceMysqlTimezone())
-                .port(configVo.getSourceMysqlPort())
-                .databaseList(configVo.getSourceMysqlDBList()) // set captured database
-                .tableList(configVo.getSourceMysqlTableList()) // set captured table
-                .username(configVo.getSourceMysqlUsername()).password(configVo.getSourceMysqlPassword()).serverId(serverId)
+                .hostname(conf.getDatasourceMysqlHost())
+                .serverTimeZone(conf.getDatasourceMysqlTimezone())
+                .port(conf.getDatasourceMysqlPort())
+                .databaseList(conf.getDatasourceMysqlSyncDatabases()) // set captured database
+                .tableList(conf.getDatasourceMysqlSyncTables()) // set captured table
+                .username(conf.getDatasourceMysqlUsername()).password(conf.getDatasourceMysqlPassword()).serverId(serverId)
                 .debeziumProperties(properties).startupOptions(startupOptions).deserializer(new JsonDebeziumDeserializationSchema()).includeSchemaChanges(true) // converts SourceRecord to JSON String
                 .build();
 
 
-        KafkaSink<String> kafkaSink = KafkaSink.<String>builder().setBootstrapServers(configVo.getSinkKafkaBrokers()).
+        KafkaSink<String> kafkaSink = KafkaSink.<String>builder().setBootstrapServers(conf.getSinkKafkaBrokers()).
                 setProperty("transaction.timeout.ms", "600000").setRecordSerializer(getKafkaRecordSerializer()).setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE).build();
         env.getCheckpointConfig().enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
         env.enableCheckpointing(3000);
@@ -70,13 +76,13 @@ public class FlinkMysqlKafka {
         backend.setPredefinedOptions(PredefinedOptions.SPINNING_DISK_OPTIMIZED_HIGH_MEM);
         env.setStateBackend(backend);
 
-        if (!StringUtils.isEmpty(configVo.getCheckpointDirectory())) {
-            env.getCheckpointConfig().setCheckpointStorage(configVo.getCheckpointDirectory());
+        if (!StringUtils.isEmpty(conf.getJobCheckpointDirectory())) {
+            env.getCheckpointConfig().setCheckpointStorage(conf.getJobCheckpointDirectory());
         }
         env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
         env.fromSource(mySqlSource, WatermarkStrategy.noWatermarks(), "MySQL Source")
-                .uid(configVo.getSourceTransformationUid()).setParallelism(1).sinkTo(kafkaSink).setParallelism(configVo.getSinkKafkaParallelism());
-        env.execute("MySQL Binlog -> Kafka:" + configVo.getSourceTransformationUid());
+                .uid(conf.getJobID()).setParallelism(1).sinkTo(kafkaSink).setParallelism(conf.getSinkKafkaParallelism());
+        env.execute("MySQL Binlog -> Kafka:" + conf.getJobID());
     }
 
     private static KafkaRecordSerializationSchema getKafkaRecordSerializer() {

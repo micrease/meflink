@@ -8,7 +8,7 @@ mvn clean package
 ```
 2,将meflink-common-1.0-SNAPSHOT.jar上传到flink安装目录的lib目录中    
 3,将meflink-mysql-kafka-1.0-SNAPSHOT.jar 通过Flink Dashboard,Submit New Job提交  
-4,将resources/mysql2kafka.yaml 复制到/etc/flink/目录中,配置好mysql与kafka信息  
+4,将resources目录下的mysql2kafka.yaml复制到/etc/flink/conf.d/目录中,配置好mysql与kafka信息  
 5,在Flink Dashboard运行Job  
 
 ## 测试表

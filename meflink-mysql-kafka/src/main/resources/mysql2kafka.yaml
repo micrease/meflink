@@ -1,5 +1,5 @@
 job:
-  id: mk01
+  id: mysql2kafka
   checkpoint-directory: file:///tmp/checkpoint
 datasource:
   mysql:

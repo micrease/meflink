@@ -3,7 +3,7 @@ job:
   checkpoint-directory: file:///tmp/checkpoint
 datasource:
   mysql:
-    host: 127.0.0.1
+    host: 192.168.1.78
     port: 3306
     username: root
     password: 123456
@@ -16,9 +16,9 @@ datasource:
     # 2   LATEST_OFFSET,
     # 3   SPECIFIC_OFFSETS,
     # 4   TIMESTAMP
-    startup_mode : 2
+    startup_mode: 2
     # startup_mode = 4时，指定时间戳
-    startup_timestamp : 0
+    startup_timestamp: 0
 sink:
   kafka:
     brokers: 127.0.0.1:9092

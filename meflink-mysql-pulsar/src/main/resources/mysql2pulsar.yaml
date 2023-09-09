@@ -7,7 +7,7 @@ datasource:
     port: 3306
     username: root
     password: 123456
-    slave_id: 1000
+    slave_id: 1001
     timezone: Asia/Shanghai
     databases: test
     tables: test.tb_order

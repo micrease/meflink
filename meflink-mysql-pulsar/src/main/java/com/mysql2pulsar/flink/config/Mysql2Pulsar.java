@@ -3,7 +3,7 @@ package com.mysql2pulsar.flink.config;
 import lombok.Data;
 
 @Data
-public class Mysql2Kafka {
+public class Mysql2Pulsar {
     String JobID;
     String JobCheckpointDirectory;
     //数据源
@@ -18,7 +18,6 @@ public class Mysql2Kafka {
     String datasourceDatabases;
     String datasourceTables;
 
-    String sinkKafkaBrokers;
-    int sinkKafkaParallelism;
-    int sinkKafkaPartition;
+    String sinkServiceUrl;
+    String sinkAdminUrl;
 }

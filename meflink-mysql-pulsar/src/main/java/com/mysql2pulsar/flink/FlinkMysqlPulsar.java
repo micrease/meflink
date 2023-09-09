@@ -1,8 +1,9 @@
 
 package com.mysql2pulsar.flink;
 
+import com.alibaba.fastjson.JSONObject;
 import com.mysql2pulsar.flink.config.Config;
-import com.mysql2pulsar.flink.config.Mysql2Kafka;
+import com.mysql2pulsar.flink.config.Mysql2Pulsar;
 import com.mysql2pulsar.flink.config.YamlConfig;
 import com.ververica.cdc.connectors.mysql.source.MySqlSource;
 import com.ververica.cdc.connectors.mysql.table.StartupMode;
@@ -12,8 +13,10 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.pulsar.sink.PulsarSink;
+import org.apache.flink.connector.pulsar.sink.PulsarSinkBuilder;
 import org.apache.flink.connector.pulsar.sink.writer.context.PulsarSinkContext;
-import org.apache.flink.connector.pulsar.sink.writer.serializer.PulsarSerializationSchema;
+import org.apache.flink.connector.pulsar.sink.writer.router.TopicRouter;
+import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicPartition;
 import org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackend;
 import org.apache.flink.contrib.streaming.state.PredefinedOptions;
 import org.apache.flink.streaming.api.CheckpointingMode;
@@ -24,13 +27,10 @@ import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.flink.connector.pulsar.sink.writer.router.TopicRouter;
-import org.apache.flink.connector.pulsar.source.enumerator.topic.TopicPartition;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class FlinkMysqlPulsar {
 
@@ -48,13 +48,13 @@ public class FlinkMysqlPulsar {
         properties.setProperty("converters", "dateConverters");
         properties.setProperty("dateConverters.type", "com.common.meflink.utils.MySqlDateTimeConverter");
 
-        Mysql2Kafka conf = config.getMysql2Kafka();
+        Mysql2Pulsar conf = config.getMysql2Pulsar();
         //默认增量订阅
         StartupOptions startupOptions = StartupOptions.latest();
-        String serverId = "2000";
+        String serverId = "2001";
         if (conf.getStartupMode() == StartupMode.INITIAL.ordinal()) {
             startupOptions = StartupOptions.initial();
-            serverId = "3000";
+            serverId = "3001";
         } else if (conf.getStartupMode() == StartupMode.TIMESTAMP.ordinal()) {
             if (conf.getStartupTimestamp() == 0) {
                 throw new Exception("StartupMode is TIMESTAMP,But not setting startup_timestamp");
@@ -76,17 +76,21 @@ public class FlinkMysqlPulsar {
                 .debeziumProperties(properties).startupOptions(startupOptions).deserializer(new JsonDebeziumDeserializationSchema()).includeSchemaChanges(true) // converts SourceRecord to JSON String
                 .build();
 
-
         List<String> topics = new ArrayList();
-        PulsarSink<String> pulsarSink = PulsarSink.builder()
-                //pulsar://pulsar.us-west.example.com:6650
-                .setServiceUrl(conf.getSinkKafkaBrokers()).setTopicRouter(new CustomTopicRouter(topics))
-                //http://my-broker.example.com:8080
-                .setAdminUrl("")
-                //.setTopics("topic1")
-                .setSerializationSchema(PulsarSerializationSchema.flinkSchema(new SimpleStringSchema()))
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
+
+
+        System.out.println("getSinkAdminUrl="+conf.getSinkAdminUrl());
+        System.out.println("getSinkServiceUrl="+conf.getSinkServiceUrl());
+        PulsarSinkBuilder buider = PulsarSink.builder()
+                //http://192.168.1.78:8080
+                .setAdminUrl(conf.getSinkAdminUrl())
+                //pulsar://192.168.1.78:6650
+                .setServiceUrl(conf.getSinkServiceUrl())
+                .setSerializationSchema(new SimpleStringSchema())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE);
+
+        buider.setTopicRouter(new CustomTopicRouter(topics));
+        PulsarSink<String> pulsarSink = buider.build();
 
 
         env.getCheckpointConfig().enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
@@ -100,27 +104,37 @@ public class FlinkMysqlPulsar {
         }
         env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
         env.fromSource(mySqlSource, WatermarkStrategy.noWatermarks(), "MySQL Source")
-                .uid(conf.getJobID()).setParallelism(1).sinkTo(pulsarSink).setParallelism(conf.getSinkKafkaParallelism());
-        env.execute("MySQL Binlog -> Kafka:" + conf.getJobID());
+                .uid(conf.getJobID()).setParallelism(1).sinkTo(pulsarSink).setParallelism(1);
+        env.execute("MySQL Binlog -> Pulsar:" + conf.getJobID());
     }
 
-}
+    public static class CustomTopicRouter implements TopicRouter<String> {
+        private static final long serialVersionUID = 1698701183626468094L;
 
-public class CustomTopicRouter implements TopicRouter<String> {
-    private static final long serialVersionUID = 1698701183626468094L;
+        private final List<String> topics;
 
-    private final List<String> topics;
-    private final AtomicInteger counter;
+        public CustomTopicRouter(List<String> topics) {
+            this.topics = topics;
+        }
 
-    public CustomTopicRouter(List<String> topics) {
-        this.topics = topics;
-        this.counter = new AtomicInteger(0);
-    }
+        @Override
+        public TopicPartition route(String row, String key, List<TopicPartition> partitions, PulsarSinkContext context) {
+            //row={"before":{"id":1,"order_no":"2222","third_order_no":"4324234","user_id":222,"inviter_id":22,"shop_id":222,"goods_id":0,"goods_cate_id":0,"goods_name":"","price":0.0,"amount":0,"total_price":0.0,"created_time":null,"coupon_name":"","pay_channel":0,"coupon_id":0,"status":0,"user_remark":"","freight_charge":0.0,"pay_amount":0.0,"pay_order_no":"","address_id":0,"pay_time":null,"updated_time":null,"send_out_time":null,"finished_time":null,"coupon_amount":0.0,"order_month":0,"change_time":"2023-09-08 15:23:03","create_date":""},
+            // "after":{"id":1,"order_no":"2222","third_order_no":"4324234","user_id":3333,"inviter_id":22,"shop_id":222,"goods_id":0,"goods_cate_id":0,"goods_name":"","price":0.0,"amount":0,"total_price":0.0,"created_time":null,"coupon_name":"","pay_channel":0,"coupon_id":0,"status":0,"user_remark":"","freight_charge":0.0,"pay_amount":0.0,"pay_order_no":"","address_id":0,"pay_time":null,"updated_time":null,"send_out_time":null,"finished_time":null,"coupon_amount":0.0,"order_month":0,"change_time":"2023-09-08 15:24:59","create_date":""},
+            // "source":{"version":"1.6.4.Final","connector":"mysql","name":"mysql_binlog_source","ts_ms":1694186699000,"snapshot":"false","db":"test","sequence":null,"table":"tb_order","server_id":1,"gtid":null,"file":"孤火-bin.000005","pos":909,"row":0,"thread":null,"query":null},"op":"u","ts_ms":1694186703443,"transaction":null}
+            JSONObject rawData = JSONObject.parseObject(row);
+            JSONObject source = rawData.getJSONObject("source");
+            String db = source.getString("db");
+            String table = source.getString("table");
 
-    @Override
-    public String route(String s, String key, List<String> partitions, PulsarSinkContext context) {
-        int index = counter.incrementAndGet() / 10 % topics.size();
-        String topic = topics.get(index);
-        return new TopicPartition(topic, index);
+            JSONObject after = rawData.getJSONObject("after");
+            String topic = "mysqlbinlog_ddl";
+            logger.info("收取到消息:" + row);
+            if (after != null) {
+                topic = String.format("mysqlbinlog_%s_%s", db, table);
+            }
+            System.out.println("topic===="+topic);
+            return new TopicPartition(topic);
+        }
     }
 }

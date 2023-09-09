@@ -10,8 +10,6 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -46,44 +44,43 @@ public class YamlConfig {
         ParameterTool parameterTool = ParameterTool.fromArgs(args);
         String propertiesFilePath = parameterTool.get("config_path");
         Config config = new Config();
-        Mysql2Kafka mysql2Kafka = loadMsql2Kafka(propertiesFilePath);
-        config.setMysql2Kafka(mysql2Kafka);
+        Mysql2Pulsar mysql2Kafka = loadMsql2Kafka(propertiesFilePath);
+        config.setMysql2Pulsar(mysql2Kafka);
         return config;
     }
 
-    public static Mysql2Kafka loadMsql2Kafka(String configPath) throws IOException {
+    public static Mysql2Pulsar loadMsql2Kafka(String configPath) throws IOException {
         if (StringUtils.isEmpty(configPath)) {
-            configPath = getResourcePath("mysql2kafka.yaml");
+            configPath = getResourcePath("mysql2pulsar.yaml");
         }
-        Mysql2Kafka mysql2Kafka = new Mysql2Kafka();
+        Mysql2Pulsar mysql2Pulsar = new Mysql2Pulsar();
         Map map = loadYamlConf(configPath);
         LinkedHashMap<String, Object> job = (LinkedHashMap<String, Object>) map.get("job");
-        mysql2Kafka.setJobID(job.getOrDefault("id", "mk01").toString());
-        mysql2Kafka.setJobCheckpointDirectory(job.getOrDefault("checkpoint-directory", "file:///tmp/checkpoint").toString());
+        mysql2Pulsar.setJobID(job.getOrDefault("id", "mk01").toString());
+        mysql2Pulsar.setJobCheckpointDirectory(job.getOrDefault("checkpoint-directory", "file:///tmp/checkpoint").toString());
 
         LinkedHashMap<String, Object> datasource = (LinkedHashMap<String, Object>) map.get("datasource");
         LinkedHashMap<String, Object> mysql = (LinkedHashMap<String, Object>) datasource.get("mysql");
 
-        mysql2Kafka.setDatasourceMysqlHost(mysql.getOrDefault("host", "127.0.0.1").toString());
-        mysql2Kafka.setDatasourceMysqlPort((int) mysql.getOrDefault("port", 3306));
-        mysql2Kafka.setDatasourceMysqlUsername(mysql.getOrDefault("username", "root").toString());
-        mysql2Kafka.setDatasourceMysqlPassword(mysql.getOrDefault("password", "123456").toString());
-        mysql2Kafka.setDatasourceMysqlSlaveId((int) mysql.getOrDefault("slave_id", 1000));
-        mysql2Kafka.setDatasourceMysqlTimezone(mysql.getOrDefault("timezone", "Asia/Shanghai").toString());
+        mysql2Pulsar.setDatasourceMysqlHost(mysql.getOrDefault("host", "127.0.0.1").toString());
+        mysql2Pulsar.setDatasourceMysqlPort((int) mysql.getOrDefault("port", 3306));
+        mysql2Pulsar.setDatasourceMysqlUsername(mysql.getOrDefault("username", "root").toString());
+        mysql2Pulsar.setDatasourceMysqlPassword(mysql.getOrDefault("password", "123456").toString());
+        mysql2Pulsar.setDatasourceMysqlSlaveId((int) mysql.getOrDefault("slave_id", 1000));
+        mysql2Pulsar.setDatasourceMysqlTimezone(mysql.getOrDefault("timezone", "Asia/Shanghai").toString());
 
-        mysql2Kafka.setStartupMode((int) mysql.getOrDefault("startup_mode", 0));
-        mysql2Kafka.setStartupTimestamp((int) mysql.getOrDefault("startup_timestamp", 0));
-        mysql2Kafka.setDatasourceDatabases(mysql.getOrDefault("databases", "").toString());
-        mysql2Kafka.setDatasourceTables(mysql.getOrDefault("tables", "").toString());
+        mysql2Pulsar.setStartupMode((int) mysql.getOrDefault("startup_mode", 0));
+        mysql2Pulsar.setStartupTimestamp((int) mysql.getOrDefault("startup_timestamp", 0));
+        mysql2Pulsar.setDatasourceDatabases(mysql.getOrDefault("databases", "").toString());
+        mysql2Pulsar.setDatasourceTables(mysql.getOrDefault("tables", "").toString());
 
         //sink
         LinkedHashMap<String, Object> sink = (LinkedHashMap<String, Object>) map.get("sink");
-        LinkedHashMap<String, Object> sinkKafka = (LinkedHashMap<String, Object>) sink.get("kafka");
+        LinkedHashMap<String, Object> sinkKafka = (LinkedHashMap<String, Object>) sink.get("pulsar");
 
-        mysql2Kafka.setSinkKafkaBrokers(sinkKafka.getOrDefault("brokers", "127.0.0.1:9092").toString());
-        mysql2Kafka.setSinkKafkaPartition((int) sinkKafka.getOrDefault("partition", 1));
-        mysql2Kafka.setSinkKafkaParallelism((int) sinkKafka.getOrDefault("parallelism", 1));
+        mysql2Pulsar.setSinkServiceUrl(sinkKafka.getOrDefault("service-url", "http://127.0.0.1:6650").toString());
+        mysql2Pulsar.setSinkAdminUrl(sinkKafka.getOrDefault("admin-url", "http://127.0.0.1:8080").toString());
         logger.info("{}", map);
-        return mysql2Kafka;
+        return mysql2Pulsar;
     }
 }

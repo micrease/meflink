@@ -27,8 +27,8 @@ under the License.
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <flink.version>1.16.2</flink.version>
-        <flink.cdc.version>2.3.0</flink.cdc.version>
+        <flink.version>1.17.1</flink.version>
+        <flink.cdc.version>2.4.1</flink.cdc.version>
         <target.java.version>1.8</target.java.version>
         <scala.binary.version>2.12</scala.binary.version>
         <maven.compiler.source>${target.java.version}</maven.compiler.source>

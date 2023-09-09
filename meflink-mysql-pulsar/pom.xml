@@ -30,6 +30,12 @@ under the License.
     <packaging>jar</packaging>
 
     <dependencies>
+        <!--
+        <dependency>
+            <groupId>org.apache.pulsar</groupId>
+            <artifactId>pulsar-client-all</artifactId>
+        </dependency>
+        -->
         <dependency>
             <groupId>com.meflink</groupId>
             <artifactId>meflink-common</artifactId>

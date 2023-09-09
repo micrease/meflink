@@ -1,9 +1,9 @@
 job:
-  id: mysql2kafka
+  id: mysql2pulsar
   checkpoint-directory: file:///tmp/checkpoint
 datasource:
   mysql:
-    host: 127.0.0.1
+    host: 192.168.1.78
     port: 3306
     username: root
     password: 123456
@@ -20,7 +20,6 @@ datasource:
     # startup_mode = 4时，指定时间戳
     startup_timestamp : 0
 sink:
-  kafka:
-    brokers: 127.0.0.1:9092
-    parallelism: 1
-    partition: 1
+  pulsar:
+    service-url: pulsar://192.168.1.78:6650
+    admin-url: http://192.168.1.78:8080

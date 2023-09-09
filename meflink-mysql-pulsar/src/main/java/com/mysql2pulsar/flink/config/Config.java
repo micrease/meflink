@@ -6,5 +6,5 @@ import lombok.Data;
 public class Config {
     public static final int SOURCE_MODE_FULL_DATA = 1;
 
-    Mysql2Kafka mysql2Kafka;
+    Mysql2Pulsar mysql2Pulsar;
 }

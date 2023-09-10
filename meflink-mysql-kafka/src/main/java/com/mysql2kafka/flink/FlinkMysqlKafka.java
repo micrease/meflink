@@ -50,8 +50,8 @@ public class FlinkMysqlKafka {
         if (conf.getStartupMode() == StartupMode.INITIAL.ordinal()) {
             startupOptions = StartupOptions.initial();
             serverId = "3000";
-        } else if(conf.getStartupMode() == StartupMode.TIMESTAMP.ordinal()){
-            if(conf.getStartupTimestamp()==0){
+        } else if (conf.getStartupMode() == StartupMode.TIMESTAMP.ordinal()) {
+            if (conf.getStartupTimestamp() == 0) {
                 throw new Exception("StartupMode is TIMESTAMP,But not setting startup_timestamp");
             }
             startupOptions = StartupOptions.timestamp(conf.getStartupTimestamp());
@@ -97,15 +97,12 @@ public class FlinkMysqlKafka {
             String db = source.getString("db");
             String table = source.getString("table");
 
-            JSONObject after = rawData.getJSONObject("after");
+            String topic = "mysqlbinlog_ddl";
             logger.info("收取到消息:" + element);
-            if (after != null) {
-                String topic = String.format("mysqlbinlog_%s_%s", db, table);
-                return topic;
-            } else {
-                String topic = "mysqlbinlog_ddl";
-                return topic;
+            if (!StringUtils.isEmpty(db) && !StringUtils.isEmpty(table)) {
+                topic = String.format("mysqlbinlog_%s_%s", db, table);
             }
+            return topic;
         }).setValueSerializationSchema(new SimpleStringSchema()).setKeySerializationSchema(new SimpleStringSchema()).setPartitioner(new FlinkRebalancePartitioner<>()).build();
     }
 }

@@ -79,8 +79,8 @@ public class FlinkMysqlPulsar {
         List<String> topics = new ArrayList();
 
 
-        System.out.println("getSinkAdminUrl="+conf.getSinkAdminUrl());
-        System.out.println("getSinkServiceUrl="+conf.getSinkServiceUrl());
+        System.out.println("getSinkAdminUrl=" + conf.getSinkAdminUrl());
+        System.out.println("getSinkServiceUrl=" + conf.getSinkServiceUrl());
         PulsarSinkBuilder buider = PulsarSink.builder()
                 //http://192.168.1.78:8080
                 .setAdminUrl(conf.getSinkAdminUrl())
@@ -121,19 +121,19 @@ public class FlinkMysqlPulsar {
         public TopicPartition route(String row, String key, List<TopicPartition> partitions, PulsarSinkContext context) {
             //row={"before":{"id":1,"order_no":"2222","third_order_no":"4324234","user_id":222,"inviter_id":22,"shop_id":222,"goods_id":0,"goods_cate_id":0,"goods_name":"","price":0.0,"amount":0,"total_price":0.0,"created_time":null,"coupon_name":"","pay_channel":0,"coupon_id":0,"status":0,"user_remark":"","freight_charge":0.0,"pay_amount":0.0,"pay_order_no":"","address_id":0,"pay_time":null,"updated_time":null,"send_out_time":null,"finished_time":null,"coupon_amount":0.0,"order_month":0,"change_time":"2023-09-08 15:23:03","create_date":""},
             // "after":{"id":1,"order_no":"2222","third_order_no":"4324234","user_id":3333,"inviter_id":22,"shop_id":222,"goods_id":0,"goods_cate_id":0,"goods_name":"","price":0.0,"amount":0,"total_price":0.0,"created_time":null,"coupon_name":"","pay_channel":0,"coupon_id":0,"status":0,"user_remark":"","freight_charge":0.0,"pay_amount":0.0,"pay_order_no":"","address_id":0,"pay_time":null,"updated_time":null,"send_out_time":null,"finished_time":null,"coupon_amount":0.0,"order_month":0,"change_time":"2023-09-08 15:24:59","create_date":""},
-            // "source":{"version":"1.6.4.Final","connector":"mysql","name":"mysql_binlog_source","ts_ms":1694186699000,"snapshot":"false","db":"test","sequence":null,"table":"tb_order","server_id":1,"gtid":null,"file":"孤火-bin.000005","pos":909,"row":0,"thread":null,"query":null},"op":"u","ts_ms":1694186703443,"transaction":null}
+            // "source":{"version":"1.6.4.Final","connector":"mysql","name":"mysql_binlog_source","ts_ms":1694186699000,"snapshot":"false","db":"test","sequence":null,"table":"tb_order","server_id":1,"gtid":null,"file":"孤火-bin.000005","pos":909,"row":0,"thread":null,"query":null},
+            // "op":"u","ts_ms":1694186703443,"transaction":null}
             JSONObject rawData = JSONObject.parseObject(row);
             JSONObject source = rawData.getJSONObject("source");
             String db = source.getString("db");
             String table = source.getString("table");
 
-            JSONObject after = rawData.getJSONObject("after");
             String topic = "mysqlbinlog_ddl";
             logger.info("收取到消息:" + row);
-            if (after != null) {
+            if (!StringUtils.isEmpty(db) && !StringUtils.isEmpty(table)) {
                 topic = String.format("mysqlbinlog_%s_%s", db, table);
             }
-            System.out.println("topic===="+topic);
+            System.out.println("topic====" + topic);
             return new TopicPartition(topic);
         }
     }
